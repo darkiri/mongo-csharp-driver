@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -31,7 +32,7 @@ namespace MongoDB.Bson.Serialization
     public class BsonClassMapSerializer : IBsonSerializer, IBsonIdProvider, IBsonDocumentSerializer
     {
         // private fields
-        private BsonClassMap _classMap;
+        protected BsonClassMap _classMap;
 
         // constructors
         /// <summary>
@@ -218,7 +219,8 @@ namespace MongoDB.Bson.Serialization
                 for (var bitArrayIndex = 0; bitArrayIndex < memberMapBitArray.Length; ++bitArrayIndex)
                 {
                     memberMapIndex = bitArrayIndex << 5;
-                    var memberMapBlock = ~memberMapBitArray[bitArrayIndex]; // notice that bits are flipped so 1's are now the missing elements
+                    var memberMapBlock = ~memberMapBitArray[bitArrayIndex];
+                    // notice that bits are flipped so 1's are now the missing elements
 
                     // work through this memberMapBlock of 32 elements
                     while (true)
@@ -269,16 +271,19 @@ namespace MongoDB.Bson.Serialization
                     {
                         supportsInitialization.EndInit();
                     }
-
-                    return obj;
                 }
                 else
                 {
-                    return CreateInstanceUsingCreator(values);
+                    obj = CreateInstanceUsingCreator(values);
                 }
 
+                OnDeserialized(obj);
+
+                return obj;
             }
         }
+
+        protected virtual void OnDeserialized(object obj) { }
 
         /// <summary>
         /// Get the default serialization options for this serializer.
@@ -437,10 +442,13 @@ namespace MongoDB.Bson.Serialization
                         }
                     }
                 }
+                OnSerialized(bsonWriter, value, options);
                 bsonWriter.WriteEndDocument();
             }
         }
 
+        protected virtual void OnSerialized(BsonWriter bsonWriter, object value, IBsonSerializationOptions options) { }
+        
         /// <summary>
         /// Sets the document Id.
         /// </summary>
