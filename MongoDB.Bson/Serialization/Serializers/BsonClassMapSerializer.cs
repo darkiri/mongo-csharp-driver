@@ -149,6 +149,7 @@ namespace MongoDB.Bson.Serialization
                 var discriminatorConvention = _classMap.GetDiscriminatorConvention();
                 var allMemberMaps = _classMap.AllMemberMaps;
                 var extraElementsMemberMapIndex = _classMap.ExtraElementsMemberMapIndex;
+                var notFoundElements = new Dictionary<string, object>();
                 var memberMapBitArray = FastMemberMapHelper.GetBitArray(allMemberMaps.Count);
 
                 bsonReader.ReadStartDocument();
@@ -206,10 +207,7 @@ namespace MongoDB.Bson.Serialization
                         }
                         else
                         {
-                            var message = string.Format(
-                                "Element '{0}' does not match any field or property of class {1}.",
-                                elementName, _classMap.ClassType.FullName);
-                            throw new FileFormatException(message);
+                            OnMemberNotFound(bsonReader, obj, elementName, notFoundElements);
                         }
                     }
                 }
@@ -277,13 +275,22 @@ namespace MongoDB.Bson.Serialization
                     obj = CreateInstanceUsingCreator(values);
                 }
 
-                OnDeserialized(obj);
+                OnDeserialized(obj, notFoundElements);
 
                 return obj;
             }
         }
 
-        protected virtual void OnDeserialized(object obj) { }
+        protected virtual void OnMemberNotFound(BsonReader bsonReader, object obj, string elementName, Dictionary<string, object> notFoundElements)
+        {
+            var message = string.Format(
+                "Element '{0}' does not match any field or property of class {1}.",
+                elementName,
+                _classMap.ClassType.FullName);
+            throw new FileFormatException(message);
+        }
+
+        protected virtual void OnDeserialized(object obj, IDictionary<string, object> notFoundElements) { }
 
         /// <summary>
         /// Get the default serialization options for this serializer.
@@ -522,7 +529,7 @@ namespace MongoDB.Bson.Serialization
             return obj;
         }
 
-        private void DeserializeExtraElement(
+        protected virtual void DeserializeExtraElement(
             BsonReader bsonReader,
             object obj,
             string elementName,
