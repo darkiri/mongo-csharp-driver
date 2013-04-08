@@ -23,6 +23,22 @@ namespace MongoDB.DriverUnitTests.Builders
     public class FieldsBuilderTests
     {
         [Test]
+        public void TestElemMatch()
+        {
+            var fields = Fields.ElemMatch("a2", Query.EQ("b", 10));
+            string expected = "{ \"a2\" : { \"$elemMatch\" : { \"b\" : 10 } } }";
+            Assert.AreEqual(expected, fields.ToJson());
+        }
+
+        [Test]
+        public void TestIncludeElemMatch()
+        {
+            var fields = Fields.Include("x").ElemMatch("a2", Query.EQ("b", 10));
+            string expected = "{ \"x\" : 1, \"a2\" : { \"$elemMatch\" : { \"b\" : 10 } } }";
+            Assert.AreEqual(expected, fields.ToJson());
+        }
+
+        [Test]
         public void TestInclude()
         {
             var fields = Fields.Include("a");

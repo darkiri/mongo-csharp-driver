@@ -55,6 +55,7 @@ namespace MongoDB.Bson.IO
         /// <param name="newLineChars">The new line characters.</param>
         /// <param name="outputMode">The output mode.</param>
         /// <param name="shellVersion">The version of the shell to target.</param>
+        [Obsolete("Use the no-argument constructor instead and set the properties.")]
         public JsonWriterSettings(
             bool closeOutput,
             Encoding encoding,
@@ -109,6 +110,7 @@ namespace MongoDB.Bson.IO
         /// <summary>
         /// Gets or sets the output Encoding.
         /// </summary>
+        [Obsolete("Set the Encoding when you create a StreamWriter instead (this property is ignored).")]
         public Encoding Encoding
         {
             get { return _encoding; }
@@ -201,7 +203,21 @@ namespace MongoDB.Bson.IO
         /// <returns>A clone of the settings.</returns>
         protected override BsonWriterSettings CloneImplementation()
         {
-            return new JsonWriterSettings(_closeOutput, _encoding, GuidRepresentation, _indent, _indentChars, _newLineChars, _outputMode, _shellVersion);
+            var clone = new JsonWriterSettings
+            {
+                CloseOutput = _closeOutput,
+#pragma warning disable 618
+                Encoding = _encoding,
+#pragma warning restore
+                GuidRepresentation = GuidRepresentation,
+                Indent = _indent,
+                IndentChars = _indentChars,
+                MaxSerializationDepth = MaxSerializationDepth,
+                NewLineChars = _newLineChars,
+                OutputMode = _outputMode,
+                ShellVersion = _shellVersion
+            };
+            return clone;
         }
     }
 }

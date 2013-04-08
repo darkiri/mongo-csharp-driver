@@ -90,24 +90,36 @@
       <Link>TestEnvironment.cs</Link>
     </Compile>
     <Compile Include="Builders\CollectionOptionsBuilderTests.cs" />
+    <Compile Include="Builders\FieldsBuilderTypedTests.cs" />
     <Compile Include="Builders\FieldsBuilderTests.cs" />
     <Compile Include="Builders\GeoNearOptionsBuilderTests.cs" />
     <Compile Include="Builders\GroupByBuilderTests.cs" />
     <Compile Include="Builders\IndexKeysBuilderTests.cs" />
     <Compile Include="Builders\IndexOptionsBuilderTests.cs" />
     <Compile Include="Builders\MapReduceOptionsBuilderTests.cs" />
-    <Compile Include="Builders\DeprecatedQueryBuilderTests.cs" />
+    <Compile Include="Builders\QueryBuilderGeoJsonIntegrationTests.cs" />
     <Compile Include="Builders\QueryBuilderTests.cs" />
     <Compile Include="Builders\SortByBuilderTests.cs" />
     <Compile Include="Builders\QueryBuilderTypedTests.cs" />
     <Compile Include="Builders\UpdateBuilderTests.cs" />
     <Compile Include="CommandResults\CollectionStatsResultTests.cs" />
     <Compile Include="CommandResults\CommandResultTests.cs" />
+    <Compile Include="CommandResults\IsMasterResultTests.cs" />
     <Compile Include="CommandResults\DatabaseStatsResultTests.cs" />
     <Compile Include="CommandResults\GetLastErrorResultTests.cs" />
     <Compile Include="CommandResults\ValidateCollectionResultTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonFeatureCollectionTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonFeatureTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonGeometryCollectionTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonLineStringTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonMultiLineStringTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonMultiPointTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonMultiPolygonTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonPointTests.cs" />
+    <Compile Include="GeoJsonObjectModel\GeoJsonPolygonTests.cs" />
     <Compile Include="Jira\CSharp542Tests.cs" />
     <Compile Include="Jira\CSharp653Tests.cs" />
+    <Compile Include="Jira\CSharp714Tests.cs" />
     <Compile Include="MongoClientSettingsTests.cs" />
     <Compile Include="ReadPreferenceTests.cs" />
     <Compile Include="MongoCollectionSettingsTests.cs" />

@@ -16,10 +16,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using MongoDB.Driver.Builders;
+using MongoDB.Driver.GeoJsonObjectModel;
 using NUnit.Framework;
 
 namespace MongoDB.DriverUnitTests
@@ -239,6 +241,23 @@ namespace MongoDB.DriverUnitTests
         }
 
         [Test]
+        public void TestDistinct_Typed()
+        {
+            _collection.RemoveAll();
+            _collection.DropAllIndexes();
+            _collection.Insert(new BsonDocument("x", 1));
+            _collection.Insert(new BsonDocument("x", 2));
+            _collection.Insert(new BsonDocument("x", 3));
+            _collection.Insert(new BsonDocument("x", 3));
+            var values = new HashSet<int>(_collection.Distinct<int>("x"));
+            Assert.AreEqual(3, values.Count);
+            Assert.AreEqual(true, values.Contains(1));
+            Assert.AreEqual(true, values.Contains(2));
+            Assert.AreEqual(true, values.Contains(3));
+            Assert.AreEqual(false, values.Contains(4));
+        }
+
+        [Test]
         public void TestDistinctWithQuery()
         {
             _collection.RemoveAll();
@@ -249,6 +268,24 @@ namespace MongoDB.DriverUnitTests
             _collection.Insert(new BsonDocument("x", 3));
             var query = Query.LTE("x", 2);
             var values = new HashSet<BsonValue>(_collection.Distinct("x", query));
+            Assert.AreEqual(2, values.Count);
+            Assert.AreEqual(true, values.Contains(1));
+            Assert.AreEqual(true, values.Contains(2));
+            Assert.AreEqual(false, values.Contains(3));
+            Assert.AreEqual(false, values.Contains(4));
+        }
+
+        [Test]
+        public void TestDistinctWithQuery_Typed()
+        {
+            _collection.RemoveAll();
+            _collection.DropAllIndexes();
+            _collection.Insert(new BsonDocument("x", 1));
+            _collection.Insert(new BsonDocument("x", 2));
+            _collection.Insert(new BsonDocument("x", 3));
+            _collection.Insert(new BsonDocument("x", 3));
+            var query = Query.LTE("x", 2);
+            var values = new HashSet<int>(_collection.Distinct<int>("x", query));
             Assert.AreEqual(2, values.Count);
             Assert.AreEqual(true, values.Contains(1));
             Assert.AreEqual(true, values.Contains(2));
@@ -881,6 +918,52 @@ namespace MongoDB.DriverUnitTests
             }
         }
 
+        private class PlaceGeoJson
+        {
+            public ObjectId Id { get; set; }
+            public GeoJsonPoint<GeoJson2DGeographicCoordinates> Location { get; set; }
+            public string Name { get; set; }
+            public string Type { get; set; }
+        }
+
+        [Test]
+        public void TestGeoSphericalIndex()
+        {
+            if (_server.BuildInfo.Version >= new Version(2, 4, 0, 0))
+            {
+                if (_collection.Exists()) { _collection.Drop(); }
+                _collection.Insert(new PlaceGeoJson { Location = GeoJson.Point(GeoJson.Geographic(-74.0, 40.74)), Name = "10gen" , Type = "Office" });
+                _collection.Insert(new PlaceGeoJson { Location = GeoJson.Point(GeoJson.Geographic(-74.0, 41.73)), Name = "Three" , Type = "Coffee" });
+                _collection.Insert(new PlaceGeoJson { Location = GeoJson.Point(GeoJson.Geographic(-75.0, 40.74)), Name = "Two"   , Type = "Coffee" });
+                _collection.CreateIndex(IndexKeys.GeoSpatialSpherical("Location"));
+
+                // TODO: add Query builder support for 2dsphere queries
+                var query = Query<PlaceGeoJson>.Near(x => x.Location, GeoJson.Point(GeoJson.Geographic(-74.0, 40.74)));
+
+                var cursor = _collection.FindAs<PlaceGeoJson>(query);
+                var hits = cursor.ToArray();
+
+                var hit0 = hits[0];
+                Assert.AreEqual(-74.0, hit0.Location.Coordinates.Longitude);
+                Assert.AreEqual(40.74, hit0.Location.Coordinates.Latitude);
+                Assert.AreEqual("10gen", hit0.Name);
+                Assert.AreEqual("Office", hit0.Type);
+
+                // with spherical true "Two" is considerably closer than "Three"
+                var hit1 = hits[1];
+                Assert.AreEqual(-75.0, hit1.Location.Coordinates.Longitude);
+                Assert.AreEqual(40.74, hit1.Location.Coordinates.Latitude);
+                Assert.AreEqual("Two", hit1.Name);
+                Assert.AreEqual("Coffee", hit1.Type);
+
+                var hit2 = hits[2];
+                Assert.AreEqual(-74.0, hit2.Location.Coordinates.Longitude);
+                Assert.AreEqual(41.73, hit2.Location.Coordinates.Latitude);
+                Assert.AreEqual("Three", hit2.Name);
+                Assert.AreEqual("Coffee", hit2.Type);
+            }
+        }
+
         [Test]
         public void TestGetIndexes()
         {
@@ -953,6 +1036,29 @@ namespace MongoDB.DriverUnitTests
         }
 
         [Test]
+        public void TestHashedIndex()
+        {
+            if (_server.BuildInfo.Version >= new Version(2, 4, 0, 0))
+            {
+                if (_collection.Exists()) { _collection.Drop(); }
+                _collection.Insert(new BsonDocument { { "x", "abc" } });
+                _collection.Insert(new BsonDocument { { "x", "def" } });
+                _collection.Insert(new BsonDocument { { "x", "ghi" } });
+                _collection.CreateIndex(IndexKeys.Hashed("x"));
+
+                var query = Query.EQ("x", "abc");
+                var cursor = _collection.FindAs<BsonDocument>(query);
+                var documents = cursor.ToArray();
+
+                Assert.AreEqual(1, documents.Length);
+                Assert.AreEqual("abc", documents[0]["x"].AsString);
+
+                var explain = cursor.Explain();
+                Assert.AreEqual("BtreeCursor x_hashed", explain["cursor"].AsString);
+            }
+        }
+
+        [Test]
         public void TestIndexExists()
         {
             _collection.DropAllIndexes();
@@ -1009,6 +1115,110 @@ namespace MongoDB.DriverUnitTests
         }
 
         [Test]
+        public void TestInsertBatchMultipleBatchesWriteConcernDisabledContinueOnErrorFalse()
+        {
+            var collectionName = Configuration.TestCollection.Name;
+            var collectionSettings = new MongoCollectionSettings { WriteConcern = WriteConcern.Unacknowledged };
+            var collection = Configuration.TestDatabase.GetCollection<BsonDocument>(collectionName, collectionSettings);
+            if (collection.Exists()) { collection.Drop(); }
+
+            using (Configuration.TestDatabase.RequestStart())
+            {
+                var maxMessageLength = Configuration.TestServer.RequestConnection.ServerInstance.MaxMessageLength;
+
+                var filler = new string('x', maxMessageLength / 3); // after overhead results in two documents per sub-batch
+                var documents = new BsonDocument[]
+                {
+                    // first sub-batch
+                    new BsonDocument { { "_id", 1 }, { "filler", filler } },
+                    new BsonDocument { { "_id", 2 }, { "filler", filler } },
+                    // second sub-batch
+                    new BsonDocument { { "_id", 3 }, { "filler", filler } },
+                    new BsonDocument { { "_id", 3 }, { "filler", filler } }, // duplicate _id error
+                    // third sub-batch
+                    new BsonDocument { { "_id", 4 }, { "filler", filler } },
+                    new BsonDocument { { "_id", 5 }, { "filler", filler } },
+                };
+
+                var options = new MongoInsertOptions { Flags = InsertFlags.None }; // no ContinueOnError
+                collection.InsertBatch(documents, options);
+
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 1)));
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 2)));
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 3)));
+                Assert.AreEqual(0, collection.Count(Query.EQ("_id", 4)));
+                Assert.AreEqual(0, collection.Count(Query.EQ("_id", 5)));
+            }
+        }
+
+        [Test]
+        public void TestInsertBatchMultipleBatchesWriteConcernDisabledContinueOnErrorTrue()
+        {
+            var collectionName = Configuration.TestCollection.Name;
+            var collectionSettings = new MongoCollectionSettings { WriteConcern = WriteConcern.Unacknowledged };
+            var collection = Configuration.TestDatabase.GetCollection<BsonDocument>(collectionName, collectionSettings);
+            if (collection.Exists()) { collection.Drop(); }
+
+            using (Configuration.TestDatabase.RequestStart())
+            {
+                var maxMessageLength = Configuration.TestServer.RequestConnection.ServerInstance.MaxMessageLength;
+
+                var filler = new string('x', maxMessageLength / 3); // after overhead results in two documents per sub-batch
+                var documents = new BsonDocument[]
+                {
+                    // first sub-batch
+                    new BsonDocument { { "_id", 1 }, { "filler", filler } },
+                    new BsonDocument { { "_id", 2 }, { "filler", filler } },
+                    // second sub-batch
+                    new BsonDocument { { "_id", 3 }, { "filler", filler } },
+                    new BsonDocument { { "_id", 3 }, { "filler", filler } }, // duplicate _id error
+                    // third sub-batch
+                    new BsonDocument { { "_id", 4 }, { "filler", filler } },
+                    new BsonDocument { { "_id", 5 }, { "filler", filler } },
+                };
+
+                var options = new MongoInsertOptions { Flags = InsertFlags.ContinueOnError };
+                collection.InsertBatch(documents, options);
+
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 1)));
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 2)));
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 3)));
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 4)));
+                Assert.AreEqual(1, collection.Count(Query.EQ("_id", 5)));
+            }
+        }
+
+        [Test]
+        public void TestInsertBatchSmallFinalSubbatch()
+        {
+            var collectionName = Configuration.TestCollection.Name;
+            var collectionSettings = new MongoCollectionSettings { WriteConcern = WriteConcern.Unacknowledged };
+            var collection = Configuration.TestDatabase.GetCollection<BsonDocument>(collectionName, collectionSettings);
+            if (collection.Exists()) { collection.Drop(); }
+
+            using (Configuration.TestDatabase.RequestStart())
+            {
+                var maxMessageLength = Configuration.TestServer.RequestConnection.ServerInstance.MaxMessageLength;
+                var documentCount = maxMessageLength / (1024 * 1024) + 1; // 1 document will overflow to second sub batch
+
+                var documents = new BsonDocument[documentCount];
+                for (var i = 0; i < documentCount; i++)
+                {
+                    var document = new BsonDocument
+                    {
+                        { "_id", i },
+                        { "filler", new string('x', 1024 * 1024) }
+                    };
+                    documents[i] = document;
+                }
+
+                collection.InsertBatch(documents);
+
+                Assert.AreEqual(documentCount, collection.Count());
+            }
+        }
+
+        [Test]
         public void TestIsCappedFalse()
         {
             var collection = _database.GetCollection("notcappedcollection");
@@ -1029,6 +1239,37 @@ namespace MongoDB.DriverUnitTests
 
             Assert.AreEqual(true, collection.Exists());
             Assert.AreEqual(true, collection.IsCapped());
+        }
+
+        [Test]
+        public void TestLenientRead()
+        {
+            var settings = new MongoCollectionSettings { ReadEncoding = new UTF8Encoding(false, false) };
+            var collection = _database.GetCollection(Configuration.TestCollection.Name, settings);
+
+            var document = new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "x", "abc" } };
+            var bson = document.ToBson();
+            bson[28] = 0xc0; // replace 'a' with invalid lone first code point (not followed by 10xxxxxx)
+
+            // use a RawBsonDocument to sneak the invalid bytes into the database
+            var rawBsonDocument = new RawBsonDocument(bson);
+            collection.Insert(rawBsonDocument);
+
+            var rehydrated = collection.FindOne(Query.EQ("_id", document["_id"]));
+            Assert.AreEqual("\ufffd" + "bc", rehydrated["x"].AsString);
+        }
+
+        [Test]
+        public void TestLenientWrite()
+        {
+            var settings = new MongoCollectionSettings { WriteEncoding = new UTF8Encoding(false, false) };
+            var collection = _database.GetCollection(Configuration.TestCollection.Name, settings);
+
+            var document = new BsonDocument("x", "\udc00"); // invalid lone low surrogate
+            collection.Save(document);
+
+            var rehydrated = collection.FindOne(Query.EQ("_id", document["_id"]));
+            Assert.AreEqual("\ufffd", rehydrated["x"].AsString);
         }
 
 #pragma warning disable 649 // never assigned to
@@ -1381,6 +1622,64 @@ namespace MongoDB.DriverUnitTests
 
                 var stats = _collection.GetStats();
                 Assert.IsTrue((stats.UserFlags & CollectionUserFlags.UsePowerOf2Sizes) != 0);
+            }
+        }
+
+        [Test]
+        public void TestStrictRead()
+        {
+            var settings = new MongoCollectionSettings { ReadEncoding = new UTF8Encoding(false, true) };
+            var collection = _database.GetCollection(Configuration.TestCollection.Name, settings);
+
+            var document = new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "x", "abc" } };
+            var bson = document.ToBson();
+            bson[28] = 0xc0; // replace 'a' with invalid lone first code point (not followed by 10xxxxxx)
+
+            // use a RawBsonDocument to sneak the invalid bytes into the database
+            var rawBsonDocument = new RawBsonDocument(bson);
+            collection.Insert(rawBsonDocument);
+
+            Assert.Throws<DecoderFallbackException>(() => { var rehydrated = collection.FindOne(Query.EQ("_id", document["_id"])); });
+        }
+
+        [Test]
+        public void TestStrictWrite()
+        {
+            var settings = new MongoCollectionSettings { WriteEncoding = new UTF8Encoding(false, true) };
+            var collection = _database.GetCollection(Configuration.TestCollection.Name, settings);
+
+            var document = new BsonDocument("x", "\udc00"); // invalid lone low surrogate
+            Assert.Throws<EncoderFallbackException>(() => { collection.Insert(document); });
+        }
+
+        [Test]
+        public void TestTextIndex()
+        {
+            if (_server.BuildInfo.Version >= new Version(2, 4, 0, 0))
+            {
+                var enableTextSearchCommand = new CommandDocument
+                {
+                    { "setParameter", 1 },
+                    { "textSearchEnabled", true }
+                };
+                var adminDatabase = _server.GetDatabase("admin");
+                adminDatabase.RunCommand(enableTextSearchCommand);
+
+                if (_collection.Exists()) { _collection.Drop(); }
+                _collection.Insert(new BsonDocument("x", "The quick brown fox"));
+                _collection.Insert(new BsonDocument("x", "jumped over the fence"));
+                _collection.CreateIndex(new IndexKeysDocument("x", "text"));
+
+                var textSearchCommand = new CommandDocument
+                {
+                    { "text", _collection.Name },
+                    { "search", "fox" }
+                };
+                var commandResult = _database.RunCommand(textSearchCommand);
+                var response = commandResult.Response;
+
+                Assert.AreEqual(1, response["stats"]["nfound"].ToInt32());
+                Assert.AreEqual("The quick brown fox", response["results"][0]["obj"]["x"].AsString);
             }
         }
 

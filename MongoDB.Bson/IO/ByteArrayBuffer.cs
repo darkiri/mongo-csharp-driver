@@ -213,7 +213,8 @@ namespace MongoDB.Bson.IO
         public int FindNullByte()
         {
             ThrowIfDisposed();
-            return Array.IndexOf<byte>(_bytes, 0, _position, _length - _position);
+            var index = Array.IndexOf<byte>(_bytes, 0, _sliceOffset + _position, _length - _position);
+            return (index == -1) ? -1 : index - _sliceOffset;
         }
 
         /// <summary>
@@ -274,6 +275,10 @@ namespace MongoDB.Bson.IO
             while (count > 0)
             {
                 var bytesRead = stream.Read(_bytes, _sliceOffset + position, count);
+                if (bytesRead == 0)
+                {
+                    throw new EndOfStreamException();
+                }
                 position += bytesRead;
                 count -= bytesRead;
             }

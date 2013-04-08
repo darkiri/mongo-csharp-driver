@@ -14,6 +14,8 @@
 */
 
 using System;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
 
 namespace MongoDB.Driver
 {
@@ -21,9 +23,19 @@ namespace MongoDB.Driver
     /// Represents the results of an operation performed with WriteConcern enabled.
     /// </summary>
     [Serializable]
+    [BsonSerializer(typeof(CommandResultSerializer))]
 #pragma warning disable 618
     public class WriteConcernResult : SafeModeResult
 #pragma warning restore
     {
+        // constructors
+        /// <summary>
+        /// Initializes a new instance of the <see cref="WriteConcernResult"/> class.
+        /// </summary>
+        /// <param name="response">The response.</param>
+        public WriteConcernResult(BsonDocument response)
+            : base(response)
+        {
+        }
     }
 }

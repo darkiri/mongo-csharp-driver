@@ -22,6 +22,7 @@ using System.Security.Cryptography.X509Certificates;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver.Communication.Security;
 
 namespace MongoDB.Driver.Internal
@@ -243,16 +244,30 @@ namespace MongoDB.Driver.Internal
 
         // this is a low level method that doesn't require a MongoServer
         // so it can be used while connecting to a MongoServer
-        internal CommandResult RunCommand(
+        internal TCommandResult RunCommandAs<TCommandResult>(
             string databaseName,
             QueryFlags queryFlags,
             CommandDocument command,
-            bool throwOnError)
+            bool throwOnError) where TCommandResult : CommandResult
+        {
+            var commandResultSerializer = BsonSerializer.LookupSerializer(typeof(TCommandResult));
+            IBsonSerializationOptions commandResultSerializationOptions = null;
+            return RunCommandAs<TCommandResult>(databaseName, queryFlags, command, commandResultSerializer, commandResultSerializationOptions, throwOnError);
+        }
+
+        internal TCommandResult RunCommandAs<TCommandResult>(
+            string databaseName,
+            QueryFlags queryFlags,
+            CommandDocument command,
+            IBsonSerializer commandResultSerializer,
+            IBsonSerializationOptions commandResultSerializationOptions,
+            bool throwOnError) where TCommandResult : CommandResult
         {
             var commandName = command.GetElement(0).Name;
 
             var writerSettings = new BsonBinaryWriterSettings
             {
+                Encoding = _serverInstance.Settings.WriteEncoding ?? MongoDefaults.WriteEncoding,
                 GuidRepresentation = GuidRepresentation.Unspecified,
                 MaxDocumentSize = _serverInstance.MaxDocumentSize
             };
@@ -262,17 +277,20 @@ namespace MongoDB.Driver.Internal
 
             var readerSettings = new BsonBinaryReaderSettings
             {
+                Encoding = _serverInstance.Settings.ReadEncoding ?? MongoDefaults.ReadEncoding,
                 GuidRepresentation = GuidRepresentation.Unspecified,
                 MaxDocumentSize = _serverInstance.MaxDocumentSize
             };
-            var reply = ReceiveMessage<BsonDocument>(readerSettings, null);
+            var reply = ReceiveMessage<TCommandResult>(readerSettings, commandResultSerializer, commandResultSerializationOptions);
             if (reply.NumberReturned == 0)
             {
                 var message = string.Format("Command '{0}' failed. No response returned.", commandName);
                 throw new MongoCommandException(message);
             }
 
-            var commandResult = new CommandResult(command, reply.Documents[0]);
+            var commandResult = reply.Documents[0];
+            commandResult.Command = command;
+
             if (throwOnError && !commandResult.Ok)
             {
                 throw new MongoCommandException(commandResult);
@@ -283,6 +301,7 @@ namespace MongoDB.Driver.Internal
 
         internal MongoReplyMessage<TDocument> ReceiveMessage<TDocument>(
             BsonBinaryReaderSettings readerSettings,
+            IBsonSerializer serializer,
             IBsonSerializationOptions serializationOptions)
         {
             if (_state == MongoConnectionState.Closed) { throw new InvalidOperationException("Connection is closed."); }
@@ -302,7 +321,7 @@ namespace MongoDB.Driver.Internal
                     using (var bsonBuffer = new BsonBuffer(byteBuffer, true))
                     {
                         byteBuffer.MakeReadOnly();
-                        var reply = new MongoReplyMessage<TDocument>(readerSettings);
+                        var reply = new MongoReplyMessage<TDocument>(readerSettings, serializer);
                         reply.ReadFrom(bsonBuffer, serializationOptions);
                         return reply;
                     }
@@ -367,26 +386,26 @@ namespace MongoDB.Driver.Internal
                 {
                     var readerSettings = new BsonBinaryReaderSettings
                     {
+                        Encoding = _serverInstance.Settings.ReadEncoding ?? MongoDefaults.ReadEncoding,
                         GuidRepresentation = message.WriterSettings.GuidRepresentation,
                         MaxDocumentSize = _serverInstance.MaxDocumentSize
                     };
-                    var replyMessage = ReceiveMessage<BsonDocument>(readerSettings, null);
-                    var getLastErrorResponse = replyMessage.Documents[0];
-                    writeConcernResult = new WriteConcernResult();
-                    writeConcernResult.Initialize(getLastErrorCommand, getLastErrorResponse);
-
+                    var writeConcernResultSerializer = BsonSerializer.LookupSerializer(typeof(WriteConcernResult));
+                    var replyMessage = ReceiveMessage<WriteConcernResult>(readerSettings, writeConcernResultSerializer, null);
+                    writeConcernResult = replyMessage.Documents[0];
+                    writeConcernResult.Command = getLastErrorCommand;
                     if (!writeConcernResult.Ok)
                     {
                         var errorMessage = string.Format(
                             "WriteConcern detected an error '{0}'. (response was {1}).",
-                            writeConcernResult.ErrorMessage, getLastErrorResponse.ToJson());
+                            writeConcernResult.ErrorMessage, writeConcernResult.Response.ToJson());
                         throw new WriteConcernException(errorMessage, writeConcernResult);
                     }
                     if (writeConcernResult.HasLastErrorMessage)
                     {
                         var errorMessage = string.Format(
                             "WriteConcern detected an error '{0}'. (Response was {1}).",
-                            writeConcernResult.LastErrorMessage, getLastErrorResponse.ToJson());
+                            writeConcernResult.LastErrorMessage, writeConcernResult.Response.ToJson());
                         throw new WriteConcernException(errorMessage, writeConcernResult);
                     }
                 }

@@ -378,7 +378,7 @@ namespace MongoDB.Driver
         /// <returns>The result of evaluating the code.</returns>
         public virtual BsonValue Eval(EvalFlags flags, BsonJavaScript code, params object[] args)
         {
-            var argsArray = (args != null && args.Length > 1) ? new BsonArray(args) : null;
+            var argsArray = (args != null && args.Length > 0) ? new BsonArray(args) : null;
             var command = new CommandDocument
             {
                 { "$eval", code },
@@ -912,7 +912,7 @@ namespace MongoDB.Driver
         /// <param name="command">The command object.</param>
         /// <returns>A TCommandResult</returns>
         public virtual TCommandResult RunCommandAs<TCommandResult>(IMongoCommand command)
-            where TCommandResult : CommandResult, new()
+            where TCommandResult : CommandResult
         {
             return (TCommandResult)RunCommandAs(typeof(TCommandResult), command);
         }
@@ -924,7 +924,7 @@ namespace MongoDB.Driver
         /// <param name="commandName">The name of the command.</param>
         /// <returns>A TCommandResult</returns>
         public virtual TCommandResult RunCommandAs<TCommandResult>(string commandName)
-            where TCommandResult : CommandResult, new()
+            where TCommandResult : CommandResult
         {
             return (TCommandResult)RunCommandAs(typeof(TCommandResult), commandName);
         }

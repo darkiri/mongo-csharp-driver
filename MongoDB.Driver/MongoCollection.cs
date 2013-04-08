@@ -24,6 +24,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Driver.Builders;
 using MongoDB.Driver.Internal;
 using MongoDB.Driver.Wrappers;
+using MongoDB.Bson.Serialization.Serializers;
 
 namespace MongoDB.Driver
 {
@@ -81,8 +82,10 @@ namespace MongoDB.Driver
                 {
                     AssignIdOnInsert = false,
                     GuidRepresentation = _settings.GuidRepresentation,
+                    ReadEncoding = _settings.ReadEncoding,
                     ReadPreference = _settings.ReadPreference,
-                    WriteConcern = _settings.WriteConcern
+                    WriteConcern = _settings.WriteConcern,
+                    WriteEncoding = _settings.WriteEncoding
                 };
                 _commandCollection = _database.GetCollection("$cmd", commandCollectionSettings);
             }
@@ -244,14 +247,31 @@ namespace MongoDB.Driver
         /// <returns>The distint values of the field.</returns>
         public virtual IEnumerable<BsonValue> Distinct(string key, IMongoQuery query)
         {
-            var command = new CommandDocument
-            {
-                { "distinct", _name },
-                { "key", key },
-                { "query", BsonDocumentWrapper.Create(query), query != null } // query is optional
-            };
-            var result = RunCommand(command);
-            return result.Response["values"].AsBsonArray;
+            return Distinct<BsonValue>(key, query, BsonValueSerializer.Instance, null);
+        }
+
+        /// <summary>
+        /// Returns the distinct values for a given field.
+        /// </summary>
+        /// <typeparam name="TValue">The type of the value.</typeparam>
+        /// <param name="key">The key of the field.</param>
+        /// <returns>The distint values of the field.</returns>
+        public virtual IEnumerable<TValue> Distinct<TValue>(string key)
+        {
+            return Distinct<TValue>(key, Query.Null);
+        }
+
+        /// <summary>
+        /// Returns the distinct values for a given field for documents that match a query.
+        /// </summary>
+        /// <typeparam name="TValue">The type of the value.</typeparam>
+        /// <param name="key">The key of the field.</param>
+        /// <param name="query">The query (usually a QueryDocument or constructed using the Query builder).</param>
+        /// <returns>The distint values of the field.</returns>
+        public virtual IEnumerable<TValue> Distinct<TValue>(string key, IMongoQuery query)
+        {
+            var valueSerializer = BsonSerializer.LookupSerializer(typeof(TValue));
+            return Distinct<TValue>(key, query, valueSerializer, null);
         }
 
         /// <summary>
@@ -488,9 +508,7 @@ namespace MongoDB.Driver
                         { "value", BsonNull.Value },
                         { "ok", true }
                     };
-                    var result = new FindAndModifyResult();
-                    result.Initialize(command, response);
-                    return result;
+                    return new FindAndModifyResult(response) { Command = command };
                 }
                 throw;
             }
@@ -525,9 +543,7 @@ namespace MongoDB.Driver
                         { "value", BsonNull.Value },
                         { "ok", true }
                     };
-                    var result = new FindAndModifyResult();
-                    result.Initialize(command, response);
-                    return result;
+                    return new FindAndModifyResult(response) { Command = command };
                 }
                 throw;
             }
@@ -541,7 +557,8 @@ namespace MongoDB.Driver
         /// <returns>A <see cref="MongoCursor{TDocument}"/>.</returns>
         public virtual MongoCursor<TDocument> FindAs<TDocument>(IMongoQuery query)
         {
-            return new MongoCursor<TDocument>(this, query, _settings.ReadPreference);
+            var serializer = BsonSerializer.LookupSerializer(typeof(TDocument));
+            return FindAs<TDocument>(query, serializer, null);
         }
 
         /// <summary>
@@ -552,11 +569,12 @@ namespace MongoDB.Driver
         /// <returns>A <see cref="MongoCursor{TDocument}"/>.</returns>
         public virtual MongoCursor FindAs(Type documentType, IMongoQuery query)
         {
-            return MongoCursor.Create(documentType, this, query, _settings.ReadPreference);
+            var serializer = BsonSerializer.LookupSerializer(documentType);
+            return FindAs(documentType, query, serializer, null);
         }
 
         /// <summary>
-        /// Returns a cursor that can be used to find one document in this collection as a TDocument.
+        /// Returns one document in this collection as a TDocument.
         /// </summary>
         /// <typeparam name="TDocument">The type to deserialize the documents as.</typeparam>
         /// <returns>A TDocument (or null if not found).</returns>
@@ -566,7 +584,7 @@ namespace MongoDB.Driver
         }
 
         /// <summary>
-        /// Returns a cursor that can be used to find one document in this collection that matches a query as a TDocument.
+        /// Returns one document in this collection that matches a query as a TDocument.
         /// </summary>
         /// <typeparam name="TDocument">The type to deserialize the documents as.</typeparam>
         /// <param name="query">The query (usually a QueryDocument or constructed using the Query builder).</param>
@@ -577,7 +595,7 @@ namespace MongoDB.Driver
         }
 
         /// <summary>
-        /// Returns a cursor that can be used to find one document in this collection as a TDocument.
+        /// Returns one document in this collection as a TDocument.
         /// </summary>
         /// <param name="documentType">The nominal type of the documents.</param>
         /// <returns>A document (or null if not found).</returns>
@@ -587,7 +605,7 @@ namespace MongoDB.Driver
         }
 
         /// <summary>
-        /// Returns a cursor that can be used to find one document in this collection that matches a query as a TDocument.
+        /// Returns one document in this collection that matches a query as a TDocument.
         /// </summary>
         /// <param name="documentType">The type to deserialize the documents as.</param>
         /// <param name="query">The query (usually a QueryDocument or constructed using the Query builder).</param>
@@ -1177,8 +1195,25 @@ namespace MongoDB.Driver
                         if (message.MessageLength > connection.ServerInstance.MaxMessageLength)
                         {
                             byte[] lastDocument = message.RemoveLastDocument(bsonBuffer);
-                            var intermediateResult = connection.SendMessage(bsonBuffer, message, writeConcern, _database.Name);
-                            if (writeConcern.Enabled) { results.Add(intermediateResult); }
+
+                            if (writeConcern.Enabled || (options.Flags & InsertFlags.ContinueOnError) != 0)
+                            {
+                                var intermediateResult = connection.SendMessage(bsonBuffer, message, writeConcern, _database.Name);
+                                if (writeConcern.Enabled) { results.Add(intermediateResult); }
+                            }
+                            else
+                            {
+                                // if WriteConcern is disabled and ContinueOnError is false we have to check for errors and stop if sub-batch has error
+                                try
+                                {
+                                    connection.SendMessage(bsonBuffer, message, WriteConcern.Acknowledged, _database.Name);
+                                }
+                                catch (WriteConcernException)
+                                {
+                                    return null;
+                                }
+                            }
+
                             message.ResetBatch(bsonBuffer, lastDocument);
                         }
                     }
@@ -1628,6 +1663,7 @@ namespace MongoDB.Driver
         {
             return new BsonBinaryReaderSettings
             {
+                Encoding = _settings.ReadEncoding ?? MongoDefaults.ReadEncoding,
                 GuidRepresentation = _settings.GuidRepresentation,
                 MaxDocumentSize = connection.ServerInstance.MaxDocumentSize
             };
@@ -1637,6 +1673,7 @@ namespace MongoDB.Driver
         {
             return new BsonBinaryWriterSettings
             {
+                Encoding = _settings.WriteEncoding ?? MongoDefaults.WriteEncoding,
                 GuidRepresentation = _settings.GuidRepresentation,
                 MaxDocumentSize = connection.ServerInstance.MaxDocumentSize
             };
@@ -1648,25 +1685,37 @@ namespace MongoDB.Driver
         }
 
         internal TCommandResult RunCommandAs<TCommandResult>(IMongoCommand command)
-            where TCommandResult : CommandResult, new()
+            where TCommandResult : CommandResult
         {
             return (TCommandResult)RunCommandAs(typeof(TCommandResult), command);
         }
 
+        internal TCommandResult RunCommandAs<TCommandResult>(IMongoCommand command, IBsonSerializer serializer, IBsonSerializationOptions serializationOptions)
+            where TCommandResult : CommandResult
+        {
+            return (TCommandResult)RunCommandAs(typeof(TCommandResult), command, serializer, serializationOptions);
+        }
+
         internal CommandResult RunCommandAs(Type commandResultType, IMongoCommand command)
+        {
+            var commandResultSerializer = BsonSerializer.LookupSerializer(commandResultType);
+            return RunCommandAs(commandResultType, command, commandResultSerializer, null);
+        }
+
+        internal CommandResult RunCommandAs(Type commandResultType, IMongoCommand command, IBsonSerializer commandResultSerializer, IBsonSerializationOptions commandResultSerializationOptions)
         {
             // if necessary delegate running the command to the _commandCollection
             if (_name == "$cmd")
             {
-                var response = FindOneAs<BsonDocument>(command);
-                if (response == null)
+                var commandResult = (CommandResult)FindOneAs(commandResultType, command, commandResultSerializer, commandResultSerializationOptions);
+                if (commandResult == null)
                 {
                     var commandName = command.ToBsonDocument().GetElement(0).Name;
                     var message = string.Format("Command '{0}' failed. No response returned.", commandName);
                     throw new MongoCommandException(message);
                 }
-                var commandResult = (CommandResult)Activator.CreateInstance(commandResultType); // constructor can't have arguments
-                commandResult.Initialize(command, response); // so two phase construction required
+                commandResult.Command = command;
+
                 if (!commandResult.Ok)
                 {
                     if (commandResult.ErrorMessage == "not master")
@@ -1680,11 +1729,48 @@ namespace MongoDB.Driver
             }
             else
             {
-                return _commandCollection.RunCommandAs(commandResultType, command);
+                return _commandCollection.RunCommandAs(commandResultType, command, commandResultSerializer, commandResultSerializationOptions);
             }
         }
 
         // private methods
+        private IEnumerable<TValue> Distinct<TValue>(
+            string key,
+            IMongoQuery query,
+            IBsonSerializer valueSerializer,
+            IBsonSerializationOptions valueSerializationOptions)
+        {
+            var command = new CommandDocument
+            {
+                { "distinct", _name },
+                { "key", key },
+                { "query", BsonDocumentWrapper.Create(query), query != null } // query is optional
+            };
+            var resultSerializer = new DistinctCommandResultSerializer<TValue>(valueSerializer, valueSerializationOptions);
+            var result = RunCommandAs<DistinctCommandResult<TValue>>(command, resultSerializer, null);
+            return result.Values;
+        }
+
+        private MongoCursor FindAs(Type documentType, IMongoQuery query, IBsonSerializer serializer, IBsonSerializationOptions serializationOptions)
+        {
+            return MongoCursor.Create(documentType, this, query, _settings.ReadPreference, serializer, serializationOptions);
+        }
+
+        private MongoCursor<TDocument> FindAs<TDocument>(IMongoQuery query, IBsonSerializer serializer, IBsonSerializationOptions serializationOptions)
+        {
+            return new MongoCursor<TDocument>(this, query, _settings.ReadPreference, serializer, serializationOptions);
+        }
+
+        private CommandResult FindOneAs(Type documentType, IMongoQuery query, IBsonSerializer serializer, IBsonSerializationOptions serializationOptions)
+        {
+            return FindAs(documentType, query, serializer, serializationOptions).SetLimit(1).Cast<CommandResult>().FirstOrDefault();
+        }
+
+        private TDocument FindOneAs<TDocument>(IMongoQuery query, IBsonSerializer serializer, IBsonSerializationOptions serializationOptions)
+        {
+            return FindAs<TDocument>(query, serializer, serializationOptions).SetLimit(1).FirstOrDefault();
+        }
+
         private string GetIndexName(BsonDocument keys, BsonDocument options)
         {
             if (options != null)
@@ -1790,7 +1876,7 @@ namespace MongoDB.Driver
         }
 
         /// <summary>
-        /// Returns a cursor that can be used to find one document in this collection as a TDefaultDocument.
+        /// Returns one document in this collection as a TDefaultDocument.
         /// </summary>
         /// <returns>A TDefaultDocument (or null if not found).</returns>
         public virtual TDefaultDocument FindOne()
@@ -1799,7 +1885,7 @@ namespace MongoDB.Driver
         }
 
         /// <summary>
-        /// Returns a cursor that can be used to find one document in this collection that matches a query as a TDefaultDocument.
+        /// Returns one document in this collection that matches a query as a TDefaultDocument.
         /// </summary>
         /// <param name="query">The query (usually a QueryDocument or constructed using the Query builder).</param>
         /// <returns>A TDefaultDocument (or null if not found).</returns>

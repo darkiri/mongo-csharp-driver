@@ -42,6 +42,7 @@ namespace MongoDB.Bson.IO
         /// </summary>
         /// <param name="closeInput">Whether to close the input stream when the reader is closed.</param>
         /// <param name="guidRepresentation">The representation for Guids.</param>
+        [Obsolete("Use the no-argument constructor instead and set the properties.")]
         public JsonReaderSettings(bool closeInput, GuidRepresentation guidRepresentation)
             : base(guidRepresentation)
         {
@@ -96,7 +97,12 @@ namespace MongoDB.Bson.IO
         /// <returns>A clone of the settings.</returns>
         protected override BsonReaderSettings CloneImplementation()
         {
-            return new JsonReaderSettings(_closeInput, GuidRepresentation);
+            var clone = new JsonReaderSettings
+            {
+                CloseInput = _closeInput,
+                GuidRepresentation = GuidRepresentation
+            };
+            return clone;
         }
     }
 }

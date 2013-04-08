@@ -177,6 +177,7 @@
     <Compile Include="Serialization\CreatorMapDelegateCompiler.cs" />
     <Compile Include="Serialization\ExpressionVisitor.cs" />
     <Compile Include="Serialization\ICreatorSelector.cs" />
+    <Compile Include="Serialization\IdGenerators\AscendingGuidGenerator.cs" />
     <Compile Include="Serialization\IdGenerators\BsonBinaryDataGuidGenerator.cs" />
     <Compile Include="Serialization\IdGenerators\BsonObjectIdGenerator.cs" />
     <Compile Include="Serialization\IdGenerators\CombGuidGenerator.cs" />
@@ -258,6 +259,7 @@
     <Compile Include="Serialization\Serializers\Int16Serializer.cs" />
     <Compile Include="Serialization\Serializers\Int32Serializer.cs" />
     <Compile Include="Serialization\Serializers\Int64Serializer.cs" />
+    <Compile Include="Serialization\Serializers\InterfaceSerializer.cs" />
     <Compile Include="Serialization\Serializers\IPAddressSerializer.cs" />
     <Compile Include="Serialization\Serializers\IPEndPointSerializer.cs" />
     <Compile Include="Serialization\Serializers\KeyValuePairSerializer.cs" />
